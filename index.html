@@ -171,6 +171,13 @@
       font-size: 0.78rem;
     }
 
+    .diagnostico {
+      margin: 28px 0 0;
+      color: #66788a;
+      font-size: 0.62rem;
+      line-height: 1.35;
+    }
+
     label.buscar {
       display: block;
       margin: 18px 0 8px;
@@ -221,6 +228,8 @@
 
   <label class="buscar" for="buscador">Si el micrófono falla, escribe unas palabras</label>
   <input id="buscador" type="search" placeholder="Ejemplo: puerta de enlace" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+  <p id="diagnostico" class="diagnostico">escuchando: no | hablando: no | palabras: 0 | firma: —</p>
 
   <script>
     // Banco de preguntas del examen. Cada una trae pregunta, respuesta y nota.
@@ -294,6 +303,9 @@
     // Si pasan 20 segundos sin una coincidencia clara, olvidamos lo dictado.
     const SILENCIO_MS = 20000;
 
+    // Pausa sin palabras nuevas: ahí se busca la pregunta. Cada resultado lo rearma.
+    const PAUSA_MS = 1300;
+
     // Velocidad de la lectura. hablar() la toma de aquí.
     const VELOCIDAD = 1.1;
 
@@ -313,6 +325,7 @@
     const avisarEscucha = document.getElementById("avisar-escucha");
     const reiniciosEl = document.getElementById("reinicios");
     const buscador = document.getElementById("buscador");
+    const diagnostico = document.getElementById("diagnostico");
 
     let reconocimiento = null;
     let quiereEscuchar = false;
@@ -347,6 +360,11 @@
 
     // El cierre del micrófono lo provocó la propia voz, no el usuario.
     let cierrePorVoz = false;
+
+    // Se cancelan al empezar cada escucha, para que no disparen el turno viejo.
+    let temporizadorSilencio = null;
+    let temporizadorFirma = null;
+    let temporizadorFlags = null;
 
     // En iPhone el uso es un toque por pregunta. Android no entra aquí.
     if (ES_IOS) {
@@ -540,6 +558,7 @@
       firmaVisible = firma;
       resultadoVisible = resultado;
       pintarTarjeta(resultado);
+      actualizarDiagnostico();
       // Si el interruptor está apagado, se muestra la tarjeta y no se habla.
       if (leerVoz.checked) decirResultado(resultado);
     }
@@ -552,15 +571,14 @@
       if (!quiereEscuchar) {
         if (ES_IOS && modoToqueForzado) boton.textContent = "Toca para la siguiente pregunta";
         else boton.textContent = ES_IOS ? "Toca y pregunta" : "Escuchar";
-        return;
-      }
-      if (ES_IOS) {
+      } else if (ES_IOS) {
         boton.textContent = "Escuchando… habla ahora";
         boton.classList.add("activo");
-        return;
+      } else {
+        boton.textContent = "Detener";
+        if (!hablando) boton.classList.add("activo");
       }
-      boton.textContent = "Detener";
-      if (!hablando) boton.classList.add("activo");
+      actualizarDiagnostico();
     }
 
     function mostrarReinicios() {
@@ -628,8 +646,18 @@
         estado.textContent = "Respondiendo…";
         pintarBoton();
 
+        // Si onend no llega, estas banderas no pueden quedarse en true.
+        clearTimeout(temporizadorFlags);
+        temporizadorFlags = setTimeout(function () {
+          hablando = false;
+          cierrePorVoz = false;
+          pintarBoton();
+        }, 3000);
+
         // El micrófono se apaga antes de que suene la voz.
         cierrePorVoz = false;
+        clearTimeout(temporizadorSilencio);
+        temporizadorSilencio = null;
         if (reconocimiento) {
           try {
             reconocimiento.stop();
@@ -644,6 +672,8 @@
           if (termino) return;
           termino = true;
           clearTimeout(seguro);
+          clearTimeout(temporizadorFlags);
+          temporizadorFlags = null;
 
           // Si el tiempo de seguridad ganó, cortamos lo que siga sonando.
           if (forzado && window.speechSynthesis) {
@@ -669,10 +699,12 @@
 
           // Dos segundos después se puede volver a pedir la misma pregunta.
           // Así el final de la frase no la dispara otra vez al toque.
+          clearTimeout(temporizadorFirma);
           const turno = ++turnoFirma;
-          setTimeout(function () {
+          temporizadorFirma = setTimeout(function () {
             if (turno !== turnoFirma) return;
             firmaVisible = "";
+            actualizarDiagnostico();
           }, 2000);
 
           resolve();
@@ -713,6 +745,44 @@
     });
 
     // --- Micrófono ------------------------------------------------------------
+
+    function actualizarDiagnostico() {
+      diagnostico.textContent =
+        "escuchando: " + (quiereEscuchar ? "sí" : "no")
+        + " | hablando: " + (hablando ? "sí" : "no")
+        + " | palabras: " + palabrasFinales.length
+        + " | firma: " + (firmaVisible || "—");
+    }
+
+    // Cada escucha nueva nace en cero. Si no, la firma vieja impide publicar.
+    function reiniciarTurno() {
+      palabrasFinales = [];
+      ultimoDictado = "";
+      transcripcion.textContent = "";
+      firmaVisible = "";
+      hablando = false;
+      cierrePorVoz = false;
+      clearTimeout(temporizadorSilencio);
+      temporizadorSilencio = null;
+      clearTimeout(temporizadorFirma);
+      temporizadorFirma = null;
+      clearTimeout(temporizadorFlags);
+      temporizadorFlags = null;
+      turnoFirma += 1;
+      actualizarDiagnostico();
+    }
+
+    // Se rearma con cada resultado. Si se queda apagado, la pregunta no se evalúa.
+    function armarTemporizadorSilencio() {
+      clearTimeout(temporizadorSilencio);
+      temporizadorSilencio = setTimeout(function () {
+        temporizadorSilencio = null;
+        if (hablando || !quiereEscuchar) return;
+        const dicho = ultimoDictado;
+        if (!dicho.trim()) return;
+        evaluarVoz(dicho);
+      }, PAUSA_MS);
+    }
 
     function asegurarReconocimiento() {
       if (reconocimiento) return true;
@@ -756,7 +826,9 @@
       ultimoDictado = ventana.join(" ");
       transcripcion.textContent = ultimoDictado;
       // En iPhone se espera a que Safari corte solo. No se responde a medias.
-      if (!ES_IOS) evaluarVoz(ultimoDictado);
+      // En el resto, 1300 ms de silencio. Cada resultado rearma ese reloj.
+      if (!ES_IOS) armarTemporizadorSilencio();
+      actualizarDiagnostico();
     }
 
     // ¿La frase trae esa palabra o esas palabras, sueltas?
@@ -888,11 +960,8 @@
         return;
       }
 
-      palabrasFinales = [];
-      ultimoDictado = "";
-      transcripcion.textContent = "";
-
       try {
+        reiniciarTurno();
         reconocimiento.start();
       } catch (error) {
         if (ES_IOS) anotarFalloReenganche();
@@ -911,6 +980,7 @@
       setTimeout(function () {
         if (!quiereEscuchar || hablando || !reconocimiento) return;
         try {
+          reiniciarTurno();
           reconocimiento.start();
           pintarBoton();
           estado.textContent = "escuchando...";
@@ -987,21 +1057,19 @@
 
       quiereEscuchar = true;
       ultimaCoincidencia = Date.now();
-      if (ES_IOS) {
-        palabrasFinales = [];
-        ultimoDictado = "";
-        transcripcion.textContent = "";
-      }
+      reiniciarTurno();
       pintarBoton();
       estado.textContent = ES_IOS ? "" : "escuchando...";
       pedirPantallaEncendida();
 
       try {
+        reiniciarTurno();
         reconocimiento.start();
       } catch (error) {
         setTimeout(function () {
           if (!quiereEscuchar) return;
           try {
+            reiniciarTurno();
             reconocimiento.start();
           } catch (error2) {
             quiereEscuchar = false;
@@ -1015,6 +1083,8 @@
     function detener() {
       quiereEscuchar = false;
       reinicioPendiente = false;
+      clearTimeout(temporizadorSilencio);
+      temporizadorSilencio = null;
       pintarBoton();
       estado.textContent = "";
       soltarPantalla();
@@ -1060,7 +1130,11 @@
       transcripcion.textContent = "";
       ultimaCoincidencia = Date.now();
       estado.textContent = "escuchando...";
+      actualizarDiagnostico();
     }, 1000);
+
+    setInterval(actualizarDiagnostico, 400);
+    actualizarDiagnostico();
 
     // --- Pantalla encendida ---------------------------------------------------
 
