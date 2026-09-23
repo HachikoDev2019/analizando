@@ -212,6 +212,11 @@
     <span>Responder en voz alta</span>
   </label>
 
+  <label class="interruptor">
+    <input id="avisar-escucha" type="checkbox" checked>
+    <span>Avisar cuando escuche</span>
+  </label>
+
   <p id="reinicios" class="reinicios">Reinicios: 0</p>
 
   <label class="buscar" for="buscador">Si el micrófono falla, escribe unas palabras</label>
@@ -305,6 +310,7 @@
     const tarjeta = document.getElementById("tarjeta");
     const estado = document.getElementById("estado");
     const leerVoz = document.getElementById("leer-voz");
+    const avisarEscucha = document.getElementById("avisar-escucha");
     const reiniciosEl = document.getElementById("reinicios");
     const buscador = document.getElementById("buscador");
 
@@ -332,6 +338,15 @@
 
     // Safari solo habla si el primer sonido sale de un toque. Una vez por sesión.
     let vozDesbloqueada = false;
+
+    // En iPhone, si el reenganche falla dos veces, el resto de la sesión es a toques.
+    let fallosReenganche = 0;
+    let modoToqueForzado = false;
+    let vigilaHasta = 0;
+    let reengancheMarca = 0;
+
+    // El cierre del micrófono lo provocó la propia voz, no el usuario.
+    let cierrePorVoz = false;
 
     // En iPhone el uso es un toque por pregunta. Android no entra aquí.
     if (ES_IOS) {
@@ -535,7 +550,8 @@
       // Ámbar mientras responde, aunque el botón siga diciendo Detener.
       if (hablando) boton.classList.add("hablando");
       if (!quiereEscuchar) {
-        boton.textContent = ES_IOS ? "Toca y pregunta" : "Escuchar";
+        if (ES_IOS && modoToqueForzado) boton.textContent = "Toca para la siguiente pregunta";
+        else boton.textContent = ES_IOS ? "Toca y pregunta" : "Escuchar";
         return;
       }
       if (ES_IOS) {
@@ -613,8 +629,12 @@
         pintarBoton();
 
         // El micrófono se apaga antes de que suene la voz.
+        cierrePorVoz = false;
         if (reconocimiento) {
-          try { reconocimiento.stop(); } catch (error) {}
+          try {
+            reconocimiento.stop();
+            cierrePorVoz = true;
+          } catch (error) {}
         }
 
         let termino = false;
@@ -632,16 +652,17 @@
 
           hablando = false;
           palabrasFinales = [];
+          ultimoDictado = "";
           transcripcion.textContent = "";
           pintarBoton();
 
-          // En iPhone no se reabre el micrófono: hace falta otro toque.
-          if (!ES_IOS && quiereEscuchar && reconocimiento) {
-            estado.textContent = "escuchando...";
+          // 700 ms después de terminar la respuesta, vuelve a escuchar sola.
+          if (quiereEscuchar && !(ES_IOS && modoToqueForzado)) {
             setTimeout(function () {
-              if (!quiereEscuchar || hablando || !reconocimiento) return;
-              try { reconocimiento.start(); } catch (error) {}
-            }, 400);
+              if (hablando || !quiereEscuchar) return;
+              if (ES_IOS && modoToqueForzado) return;
+              prepararReenganche();
+            }, 700);
           } else {
             estado.textContent = "";
           }
@@ -780,6 +801,11 @@
       const codigo = evento.error || "";
 
       if (codigo === "not-allowed" || codigo === "service-not-allowed") {
+        // Un not-allowed justo después del reenganche cuenta como fallo, no como aviso de Ajustes.
+        if (ES_IOS && codigo === "not-allowed" && Date.now() < vigilaHasta) {
+          anotarFalloReenganche();
+          return;
+        }
         quiereEscuchar = false;
         reinicioPendiente = false;
         soltarPantalla();
@@ -797,20 +823,130 @@
       if (codigo === "no-speech") programarReinicio();
     }
 
-    // Safari cortó solo: se evalúa lo dicho y el botón vuelve a pedir un toque.
+    // Safari cortó solo. Si hay respuesta, al terminar de decirla se reengancha sola.
     function cerrarToqueIos() {
       const dicho = ultimoDictado;
       ultimoDictado = "";
       palabrasFinales = [];
+      if (!dicho.trim()) {
+        quedarseEnToque();
+        return;
+      }
+      evaluarVoz(dicho);
+      // Si no llegó a hablar, no hay onend que reabra el micrófono.
+      if (!hablando) quedarseEnToque();
+    }
+
+    function quedarseEnToque() {
       quiereEscuchar = false;
       reinicioPendiente = false;
       soltarPantalla();
       pintarBoton();
       estado.textContent = "";
-      if (dicho.trim()) evaluarVoz(dicho);
+    }
+
+    // Después de la respuesta: avisa y abre el micrófono. En Android, siempre.
+    function prepararReenganche() {
+      if (!quiereEscuchar || hablando) return;
+      if (ES_IOS && modoToqueForzado) return;
+      if (avisarEscucha.checked) decirDime(iniciarReenganche);
+      else iniciarReenganche();
+    }
+
+    // "Dime" suena antes de abrir el micrófono, para que no lo transcriba.
+    function decirDime(luego) {
+      let listo = false;
+      function seguir() {
+        if (listo) return;
+        listo = true;
+        luego();
+      }
+      if (!window.speechSynthesis) {
+        seguir();
+        return;
+      }
+      const aviso = new SpeechSynthesisUtterance("Dime");
+      aviso.lang = IDIOMA;
+      aviso.rate = VELOCIDAD;
+      if (vozElegida) aviso.voice = vozElegida;
+      aviso.onend = seguir;
+      aviso.onerror = seguir;
+      try {
+        window.speechSynthesis.speak(aviso);
+      } catch (error) {
+        seguir();
+        return;
+      }
+      setTimeout(seguir, 1200);
+    }
+
+    function iniciarReenganche() {
+      if (!quiereEscuchar || hablando) return;
+      if (ES_IOS && modoToqueForzado) return;
+      if (!reconocimiento && !asegurarReconocimiento()) {
+        if (ES_IOS) anotarFalloReenganche();
+        return;
+      }
+
+      palabrasFinales = [];
+      ultimoDictado = "";
+      transcripcion.textContent = "";
+
+      try {
+        reconocimiento.start();
+      } catch (error) {
+        if (ES_IOS) anotarFalloReenganche();
+        else reintentarReengancheAndroid();
+        return;
+      }
+
+      if (ES_IOS) vigilarReenganche();
+      pintarBoton();
+      estado.textContent = ES_IOS ? "" : "escuchando...";
+      pedirPantallaEncendida();
+    }
+
+    // Android no lleva contador: un reintento y sigue.
+    function reintentarReengancheAndroid() {
+      setTimeout(function () {
+        if (!quiereEscuchar || hablando || !reconocimiento) return;
+        try {
+          reconocimiento.start();
+          pintarBoton();
+          estado.textContent = "escuchando...";
+        } catch (error) {}
+      }, 300);
+    }
+
+    // Si en el segundo siguiente Safari dice not-allowed, este intento no valió.
+    function vigilarReenganche() {
+      const marca = Date.now();
+      reengancheMarca = marca;
+      vigilaHasta = marca + 1000;
+      setTimeout(function () {
+        if (reengancheMarca !== marca || modoToqueForzado) return;
+        fallosReenganche = 0;
+      }, 1000);
+    }
+
+    function anotarFalloReenganche() {
+      fallosReenganche += 1;
+      reengancheMarca = 0;
+      vigilaHasta = 0;
+      quiereEscuchar = false;
+      reinicioPendiente = false;
+      if (fallosReenganche >= 2) modoToqueForzado = true;
+      soltarPantalla();
+      pintarBoton();
+      estado.textContent = "";
     }
 
     function alTerminar() {
+      // Este cierre lo pidió hablar(), para no oírse. No es un corte de Safari ni de Chrome.
+      if (cierrePorVoz) {
+        cierrePorVoz = false;
+        return;
+      }
       // Si se apagó porque estamos hablando, el reinicio lo hace hablar() al terminar.
       if (hablando) return;
       if (ES_IOS) {
@@ -902,6 +1038,15 @@
       if (ES_IOS && hablando) return;
       if (quiereEscuchar) detener();
       else empezar();
+    });
+
+    // En modo toque, un toque en la pantalla escucha. El buscador y los interruptores no.
+    document.addEventListener("click", function (evento) {
+      if (!ES_IOS || quiereEscuchar || hablando) return;
+      const origen = evento.target;
+      if (origen.closest && origen.closest("#buscador, label.buscar, label.interruptor, #btn-escuchar")) return;
+      desbloquearVoz();
+      empezar();
     });
 
     // Cada segundo: si llevamos 20 s sin acertar, borramos lo dictado.
