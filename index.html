@@ -46,6 +46,12 @@
       font-weight: 700;
     }
 
+    .modo-activo {
+      margin: 0 0 8px;
+      color: var(--gris);
+      font-size: 0.78rem;
+    }
+
     /* Botón grande, cómodo para el pulgar. */
     #btn-escuchar {
       width: 100%;
@@ -233,6 +239,7 @@
   </style>
 </head>
 <body>
+  <p id="modo-activo" class="modo-activo">Modo tutor</p>
   <h1>Repaso de redes</h1>
 
   <button id="btn-escuchar" type="button">Escuchar</button>
@@ -443,8 +450,11 @@
     // Pausa sin palabras nuevas: ahí se busca la pregunta. Cada resultado lo rearma.
     const PAUSA_MS = 1300;
 
-    // Velocidad de la lectura. hablar() la toma de aquí.
-    const VELOCIDAD = 1.1;
+    // Velocidad de la lectura. hablar() la toma de aquí. Se guarda entre visitas.
+    let velocidad = leerVelocidad();
+
+    // "tutor" manda todo a Gemini. "leccion" usa el banco primero.
+    let modo = leerModo();
 
     // iPhone y iPad. En esos equipos el reconocimiento continuo no existe.
     const ES_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -466,6 +476,9 @@
     const campoClave = document.getElementById("campo-clave");
     const cambiarClave = document.getElementById("cambiar-clave");
     const diagnostico = document.getElementById("diagnostico");
+    const modoActivo = document.getElementById("modo-activo");
+    const avisoPrincipal = document.getElementById("aviso-principal");
+    let avisoLeccion = "";
 
     let reconocimiento = null;
     let quiereEscuchar = false;
@@ -689,6 +702,19 @@
 
     // a) banco seguro, b) banco dudoso, c) Gemini, d) callar si es ruido.
     function decidir(texto) {
+      const limpio = normalizar(texto);
+      const comando = comandoDe(limpio);
+      if (comando) {
+        ejecutarComando(comando);
+        return { accion: "comando" };
+      }
+
+      // Tutor: no hay banco ni puntajes. El ruido corto sigue en silencio.
+      if (modo === "tutor") {
+        if (palabrasUtiles(texto).length <= PALABRAS_RUIDO) return { accion: "callar" };
+        return { accion: "gemini", ranking: [], texto: texto };
+      }
+
       const resto = restoTrasAviso(texto);
       if (resto) return { accion: "gemini", ranking: [], texto: resto };
 
@@ -756,6 +782,98 @@
         + "\nSi la pregunta se parece a alguna de estas, responde en la misma línea que ellas: [\n"
         + ejemplosCurso(ranking)
         + "\n]";
+    }
+
+    function leerModo() {
+      try {
+        return localStorage.getItem("modo") === "leccion" ? "leccion" : "tutor";
+      } catch (error) {
+        return "tutor";
+      }
+    }
+
+    function guardarModo(valor) {
+      try {
+        localStorage.setItem("modo", valor);
+      } catch (error) {}
+    }
+
+    function leerVelocidad() {
+      try {
+        const valor = parseFloat(localStorage.getItem("velocidad"));
+        if (!valor || valor < 0.5 || valor > 2) return 1.1;
+        return valor;
+      } catch (error) {
+        return 1.1;
+      }
+    }
+
+    function guardarVelocidad(valor) {
+      try {
+        localStorage.setItem("velocidad", String(valor));
+      } catch (error) {}
+    }
+
+    function pintarModo() {
+      const tutor = modo === "tutor";
+      modoActivo.textContent = tutor ? "Modo tutor" : "Modo lección";
+      avisoPrincipal.textContent = tutor
+        ? "Pregunta lo que quieras. Di 'modo lección' si prefieres que te tome la lección."
+        : avisoLeccion;
+    }
+
+    function ajustarVelocidad(delta) {
+      const siguiente = Math.round((velocidad + delta) * 100) / 100;
+      velocidad = Math.min(2, Math.max(0.5, siguiente));
+      guardarVelocidad(velocidad);
+    }
+
+    // Comandos de voz. "repite" y "para" solo si la frase trae 3 palabras o menos.
+    function comandoDe(limpio) {
+      const corta = limpio.split(" ").length <= 3;
+      if (tieneFrase(limpio, "modo tutor") || tieneFrase(limpio, "modo conversacion")) return "tutor";
+      if (tieneFrase(limpio, "modo leccion") || tieneFrase(limpio, "modo examen")) return "leccion";
+      if (corta && (tieneFrase(limpio, "repite") || tieneFrase(limpio, "repitelo") || tieneFrase(limpio, "otra vez"))) return "repite";
+      if (tieneFrase(limpio, "mas despacio")) return "despacio";
+      if (tieneFrase(limpio, "mas rapido")) return "rapido";
+      if (tieneFrase(limpio, "borra la conversacion")) return "borrar";
+      if ((corta && tieneFrase(limpio, "para")) || tieneFrase(limpio, "detente") || tieneFrase(limpio, "silencio")) return "parar";
+      return "";
+    }
+
+    function ejecutarComando(comando) {
+      if (comando === "tutor" || comando === "leccion") {
+        modo = comando;
+        guardarModo(modo);
+        pintarModo();
+        hablar(comando === "tutor" ? "Modo tutor" : "Modo lección");
+        return;
+      }
+      if (comando === "repite") {
+        if (resultadoVisible) decirResultado(resultadoVisible);
+        return;
+      }
+      if (comando === "despacio") {
+        ajustarVelocidad(-0.15);
+        hablar("Más despacio");
+        return;
+      }
+      if (comando === "rapido") {
+        ajustarVelocidad(0.15);
+        hablar("Más rápido");
+        return;
+      }
+      if (comando === "borrar") {
+        vaciarHistorial();
+        hablar("Conversación borrada");
+        return;
+      }
+      palabrasFinales = [];
+      transcripcion.textContent = "";
+      detener();
+      if (window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch (error) {}
+      }
     }
 
     function leerClave() {
@@ -920,6 +1038,10 @@
 
     function aplicarDecision(texto) {
       const decision = decidir(texto);
+      if (decision.accion === "comando") {
+        cancelarGemini();
+        return true;
+      }
       if (decision.accion === "callar") {
         cancelarGemini();
         return false;
@@ -1174,7 +1296,7 @@
 
         const frase = new SpeechSynthesisUtterance(texto);
         frase.lang = IDIOMA;
-        frase.rate = VELOCIDAD;
+        frase.rate = velocidad;
         if (vozElegida) frase.voice = vozElegida;
         frase.onend = function () { finalizar(false); };
         frase.onerror = function () { finalizar(false); };
@@ -1288,27 +1410,6 @@
     }
 
     function evaluarVoz(texto) {
-      // Comandos sobre el texto ya normalizado, antes de buscar en el banco.
-      const limpio = normalizar(texto);
-
-      if (tieneFrase(limpio, "repite") || tieneFrase(limpio, "repitelo")) {
-        if (resultadoVisible) decirResultado(resultadoVisible);
-        return;
-      }
-
-      // "para" solo corta si la frase es corta. En una pregunta larga se ignora.
-      const fraseCorta = limpio.split(" ").length <= 2;
-      if ((fraseCorta && tieneFrase(limpio, "para")) || tieneFrase(limpio, "detente") || tieneFrase(limpio, "silencio")) {
-        // Se borra lo dictado para que, al volver a escuchar, el comando no corte de nuevo.
-        palabrasFinales = [];
-        transcripcion.textContent = "";
-        detener();
-        if (window.speechSynthesis) {
-          try { window.speechSynthesis.cancel(); } catch (error) {}
-        }
-        return;
-      }
-
       const atendio = aplicarDecision(texto);
       if (!atendio && quiereEscuchar) estado.textContent = "escuchando...";
     }
@@ -1384,7 +1485,7 @@
       }
       const aviso = new SpeechSynthesisUtterance("Dime");
       aviso.lang = IDIOMA;
-      aviso.rate = VELOCIDAD;
+      aviso.rate = velocidad;
       if (vozElegida) aviso.voice = vozElegida;
       aviso.onend = seguir;
       aviso.onerror = seguir;
@@ -1580,6 +1681,8 @@
       pintarClave();
     });
 
+    avisoLeccion = avisoPrincipal.textContent;
+    pintarModo();
     pintarClave();
 
     // En modo toque, un toque en la pantalla escucha. El buscador y los interruptores no.
@@ -1649,6 +1752,10 @@
       }
 
       const decision = decidir(texto);
+      if (decision.accion === "comando") {
+        cancelarGemini();
+        return;
+      }
       if (decision.accion === "banco") {
         cancelarGemini();
         estado.textContent = "";
