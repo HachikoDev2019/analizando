@@ -652,7 +652,7 @@
       // Si van muy parejas, no arriesgamos una sola.
       if (segundo && segundo.puntaje > 0) {
         const diferencia = (mejor.puntaje - segundo.puntaje) / mejor.puntaje;
-        if (diferencia < 0.15) {
+        if (diferencia < 0.08) {
           return { tipo: "dos", etiqueta: "Del banco", opciones: [mejor.pregunta, segundo.pregunta] };
         }
       }
@@ -660,14 +660,50 @@
       return { tipo: "una", etiqueta: "Del banco", opciones: [mejor.pregunta] };
     }
 
+    // Estas frases piden explicación. Ganan siempre: ni se mira el banco.
+    const PEDIR_GEMINI = [
+      "en palabras simples", "diferencia entre", "mas detalle",
+      "no entendi", "no entiendo", "otra vez", "de nuevo", "dime algo",
+      "explicame", "explicar", "explica", "ejemplos", "ejemplo",
+      "analogia", "desarrolla", "amplia", "profundiza", "compara",
+      "cuentame", "chiste"
+    ];
+
+    function quiereGeminiDirecto(texto) {
+      const limpio = normalizar(texto);
+      for (let i = 0; i < PEDIR_GEMINI.length; i++) {
+        if (tieneFrase(limpio, PEDIR_GEMINI[i])) return true;
+      }
+      return false;
+    }
+
+    // "Oye" o "pregunta" al inicio se quita. El resto va directo a Gemini.
+    function restoTrasAviso(texto) {
+      const limpio = normalizar(texto);
+      let aviso = "";
+      if (limpio === "oye" || limpio.indexOf("oye ") === 0) aviso = "oye";
+      else if (limpio === "pregunta" || limpio.indexOf("pregunta ") === 0) aviso = "pregunta";
+      if (!aviso || limpio === aviso) return null;
+      return texto.replace(/^\s*(oye|pregunta)\b/i, "").replace(/^[\s,.;:!?¡¿]+/, "").trim();
+    }
+
     // a) banco seguro, b) banco dudoso, c) Gemini, d) callar si es ruido.
     function decidir(texto) {
+      const resto = restoTrasAviso(texto);
+      if (resto) return { accion: "gemini", ranking: [], texto: resto };
+
+      if (quiereGeminiDirecto(texto)) {
+        return { accion: "gemini", ranking: [], texto: texto };
+      }
+
       const utiles = palabrasUtiles(texto);
       const ranking = ordenar(texto);
       const mejor = ranking[0];
       const puntaje = mejor ? mejor.puntaje : 0;
+      // Una frase larga tiene que parecerse bastante más para salir del banco.
+      const umbralAlto = utiles.length > 8 ? UMBRAL_ALTO * 1.5 : UMBRAL_ALTO;
 
-      if (mejor && puntaje >= UMBRAL_ALTO) {
+      if (mejor && puntaje >= umbralAlto) {
         return { accion: "banco", resultado: emparejar(texto) };
       }
 
@@ -686,7 +722,7 @@
 
       if (utiles.length <= PALABRAS_RUIDO) return { accion: "callar" };
 
-      return { accion: "gemini", ranking: ranking };
+      return { accion: "gemini", ranking: ranking, texto: texto };
     }
 
     function lineaCurso(item) {
@@ -896,7 +932,7 @@
         return true;
       }
       if (decision.accion !== "gemini") return false;
-      pedirGemini(texto, decision.ranking);
+      pedirGemini(decision.texto || texto, decision.ranking);
       return true;
     }
 
@@ -1255,7 +1291,7 @@
       // Comandos sobre el texto ya normalizado, antes de buscar en el banco.
       const limpio = normalizar(texto);
 
-      if (tieneFrase(limpio, "repite") || tieneFrase(limpio, "repitelo") || tieneFrase(limpio, "otra vez")) {
+      if (tieneFrase(limpio, "repite") || tieneFrase(limpio, "repitelo")) {
         if (resultadoVisible) decirResultado(resultadoVisible);
         return;
       }
@@ -1631,7 +1667,7 @@
       temporizadorBusqueda = setTimeout(function () {
         temporizadorBusqueda = null;
         if (buscador.value.trim() !== texto) return;
-        pedirGemini(texto, decision.ranking);
+        pedirGemini(decision.texto || texto, decision.ranking);
       }, 800);
     });
   </script>
