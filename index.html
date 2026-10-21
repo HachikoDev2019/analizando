@@ -115,6 +115,17 @@
       font-weight: 800;
     }
 
+    .etiqueta {
+      margin: 0 0 10px;
+      color: #9aa6b2;
+      font-size: 0.82rem;
+      font-weight: 800;
+    }
+
+    .etiqueta.insegura { color: var(--duda); }
+
+    .etiqueta.gemini { color: #9ec1ff; }
+
     .opcion + .opcion {
       margin-top: 14px;
       padding-top: 14px;
@@ -171,6 +182,15 @@
       font-size: 0.78rem;
     }
 
+    .enlaces {
+      margin: 8px 0 0;
+      font-size: 0.78rem;
+    }
+
+    .enlaces a {
+      color: #66788a;
+    }
+
     .diagnostico {
       margin: 28px 0 0;
       color: #66788a;
@@ -185,7 +205,8 @@
       font-size: 0.9rem;
     }
 
-    #buscador {
+    #buscador,
+    #campo-clave {
       width: 100%;
       min-height: 56px;
       padding: 12px 14px;
@@ -194,6 +215,20 @@
       background: #121820;
       color: white;
       font-size: 1.1rem;
+    }
+
+    #bloque-clave { margin-top: 14px; }
+
+    #guardar-clave {
+      width: 100%;
+      min-height: 48px;
+      margin-top: 8px;
+      border: 0;
+      border-radius: 12px;
+      background: var(--azul);
+      color: white;
+      font-size: 1rem;
+      font-weight: 700;
     }
   </style>
 </head>
@@ -225,15 +260,99 @@
   </label>
 
   <p id="reinicios" class="reinicios">Reinicios: 0</p>
+  <p class="enlaces"><a id="borrar-conversacion" href="#">Borrar conversación</a></p>
 
   <label class="buscar" for="buscador">Si el micrófono falla, escribe unas palabras</label>
   <input id="buscador" type="search" placeholder="Ejemplo: puerta de enlace" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false">
+
+  <div id="bloque-clave">
+    <input id="campo-clave" type="password" placeholder="Pega aquí tu API key de Gemini" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button id="guardar-clave" type="button">Guardar clave</button>
+  </div>
+  <p id="cambiar-clave" class="enlaces" hidden><a id="enlace-cambiar-clave" href="#">Cambiar API key</a></p>
 
   <p id="diagnostico" class="diagnostico">escuchando: no | hablando: no | palabras: 0 | firma: —</p>
 
   <script>
     // Banco de preguntas del examen. Cada una trae pregunta, respuesta y nota.
+    // Las primeras 76 son las de la unidad 2. Después van las anteriores, sin repetidas.
     const BANCO = [
+      {"pregunta": "¿En qué capa OSI se agrega un número de puerto de destino a una PDU durante el proceso de encapsulación?", "respuesta": "La capa de transporte", "nota": "Los puertos son de transporte, que es donde trabajan TCP y UDP."},
+      {"pregunta": "¿En cuál de estas capas del modelo OSI se agregaría una dirección lógica durante el encapsulamiento?", "respuesta": "La capa de red", "nota": "La dirección lógica es la IP. Ojo, en el modelo TCP/IP esa misma capa se llama Internet."},
+      {"pregunta": "¿Cuál es la capa responsable de enrutar los mensajes en una interconexión de redes en el modelo TCP/IP?", "respuesta": "La capa de Internet", "nota": "Cuidado, si la pregunta dice TCP/IP la respuesta es Internet. Si dice OSI, es Red."},
+      {"pregunta": "¿Cuál afirmación describe de forma precisa la encapsulación TCP/IP cuando una PC envía datos a la red?", "respuesta": "Los segmentos se envían de la capa de transporte a la capa de Internet", "nota": "Al bajar el orden es datos, segmentos, paquetes y tramas."},
+      {"pregunta": "Un cliente web recibe una respuesta de un servidor web. ¿Cuál es el orden correcto de la pila de protocolos para decodificar la transmisión recibida?", "respuesta": "Ethernet, IP, TCP, HTTP", "nota": "Al recibir se desarma de abajo hacia arriba. Al enviar sería al revés."},
+      {"pregunta": "¿Cuál de estas afirmaciones sobre los protocolos de red es correcta?", "respuesta": "Definen cómo se intercambian los mensajes entre el origen y el destino", "nota": "No definen hardware ni cómo se montan los equipos en bastidores."},
+      {"pregunta": "¿Cuál es la propiedad de la configuración IPv4 que identifica las porciones de red y de host de una dirección?", "respuesta": "La máscara de subred", "nota": "Esa es su única función: marcar dónde termina la red y empieza el host."},
+      {"pregunta": "Cuando un host envía un paquete, ¿cómo determina si el destino está en la misma red local o en una red remota?", "respuesta": "Utiliza la máscara de subred para comparar la dirección IP de origen y la de destino", "nota": "No es el DNS, que solo traduce nombres, ni las MAC, que son de otra capa."},
+      {"pregunta": "¿Cuántas direcciones de host se encuentran disponibles en la red 192.168.10.128/25?", "respuesta": "126", "nota": "El /25 deja 7 bits, o sea 128 direcciones, menos la de red y la de broadcast."},
+      {"pregunta": "Dentro de la red 10.16.10.0/24, con 10.16.10.0/26 y 10.16.10.192/28 ya usadas, ¿qué subred se puede asignar a una red de 25 hosts?", "respuesta": "10.16.10.64/27", "nota": "El /27 da 30 hosts usables y el bloque 64 a 95 está libre."},
+      {"pregunta": "¿Cuántos hosts utilizables tiene una subred /26?", "respuesta": "62", "nota": "64 direcciones menos la de red y la de broadcast."},
+      {"pregunta": "¿Cuántos hosts utilizables tiene una subred /27?", "respuesta": "30", "nota": "32 direcciones menos 2."},
+      {"pregunta": "¿Cuántos hosts utilizables tiene una subred /28?", "respuesta": "14", "nota": "16 direcciones menos 2."},
+      {"pregunta": "¿Cuántos hosts utilizables tiene una subred /29?", "respuesta": "6", "nota": "8 direcciones menos 2. No lo confundas con el /30, que tiene 4 direcciones y 2 usables."},
+      {"pregunta": "¿Cuál es la máscara decimal de un /25?", "respuesta": "255.255.255.128", "nota": "Truco: 256 menos el salto. Para el /25 el salto es 128."},
+      {"pregunta": "¿Cuál es la máscara decimal de un /26?", "respuesta": "255.255.255.192", "nota": "256 menos 64 da 192."},
+      {"pregunta": "¿Cuál es la máscara decimal de un /27?", "respuesta": "255.255.255.224", "nota": "256 menos 32 da 224."},
+      {"pregunta": "¿Cuál es la máscara decimal de un /28?", "respuesta": "255.255.255.240", "nota": "256 menos 16 da 240."},
+      {"pregunta": "¿Cuál es la dirección de red del bloque donde está la dirección 10.0.5.70 con máscara /26?", "respuesta": "10.0.5.64", "nota": "Divides 70 entre el salto 64, te quedas con la parte entera y multiplicas de vuelta."},
+      {"pregunta": "¿Cuál es la dirección de broadcast del bloque donde está 10.0.5.70 con máscara /26?", "respuesta": "10.0.5.127", "nota": "El bloque va del 64 al 127, así que la última es la de broadcast."},
+      {"pregunta": "¿Por qué a cada bloque de direcciones se le restan dos?", "respuesta": "Porque la primera es la dirección de red y la última es la de broadcast", "nota": "Ninguna de esas dos se le puede asignar a una computadora."},
+      {"pregunta": "¿Qué puerto utiliza FTP para el control de la conexión?", "respuesta": "El puerto 21", "nota": "El 20 es FTP DATA, por donde viajan los archivos."},
+      {"pregunta": "¿Qué puerto utiliza FTP DATA?", "respuesta": "El puerto 20", "nota": "No lo confundas con el 21, que es el de control."},
+      {"pregunta": "¿Qué puerto utiliza SSH?", "respuesta": "El puerto 22", "nota": ""},
+      {"pregunta": "¿Qué puerto utiliza DNS?", "respuesta": "El puerto 53", "nota": ""},
+      {"pregunta": "¿Qué puerto utiliza POP3?", "respuesta": "El puerto 110", "nota": ""},
+      {"pregunta": "¿Qué puerto utiliza HTTPS?", "respuesta": "El puerto 443", "nota": "El HTTP sin seguridad usa el 80."},
+      {"pregunta": "¿Qué puerto utiliza HTTP?", "respuesta": "El puerto 80", "nota": "El HTTPS, que va cifrado, usa el 443."},
+      {"pregunta": "¿Qué puerto utiliza SMTP?", "respuesta": "El puerto 25", "nota": "SMTP es para enviar correo, POP3 para recibirlo."},
+      {"pregunta": "¿Qué tipo de diseño de red combina voz, video y datos en el mismo canal de comunicación?", "respuesta": "Una red convergente", "nota": "No es una LAN. La LAN es por tamaño, la convergente es por lo que transporta."},
+      {"pregunta": "¿Cuál afirmación define correctamente una WLAN?", "respuesta": "Está diseñada para interconectar de forma inalámbrica a los usuarios y los extremos en un área geográfica", "nota": "La WLAN es inalámbrica. Si una alternativa dice que da acceso por cable, es falsa."},
+      {"pregunta": "¿Qué banda de RF inalámbrica utilizan los dispositivos IEEE 802.11b/g?", "respuesta": "2.4 GHz", "nota": "El 802.11a y el ac usan 5 GHz."},
+      {"pregunta": "¿Qué tecnología de codificación de datos se utiliza en los cables de cobre?", "respuesta": "Pulsos eléctricos", "nota": "En fibra óptica son pulsos de luz, y en inalámbrico, ondas de radio."},
+      {"pregunta": "Los pings al router inalámbrico local son exitosos pero los pings a un servidor en Internet fallan. ¿Qué comando ayuda a encontrar la ubicación del problema?", "respuesta": "tracert", "nota": "El ping solo dice si llega o no. El tracert dice en qué salto se corta."},
+      {"pregunta": "¿Qué comando utilizaría para ver las conexiones de red en una computadora?", "respuesta": "netstat", "nota": "La palabra clave es conexiones. El ipconfig solo muestra tu propia configuración."},
+      {"pregunta": "Un usuario accede a archivos compartidos en la misma oficina pero no puede entrar a Internet. ¿Cuál es la causa posible?", "respuesta": "La dirección de puerta de enlace predeterminada está mal configurada en la estación de trabajo", "nota": "Si llega a la red local, su IP y máscara están bien. Lo que falla es la salida."},
+      {"pregunta": "¿Por qué un técnico de red haría ping a la puerta de enlace predeterminada desde la computadora del usuario?", "respuesta": "Para verificar la conectividad con el dispositivo que proporciona acceso a redes remotas", "nota": "El gateway es la puerta de salida hacia afuera."},
+      {"pregunta": "El ping a la puerta de enlace predeterminada falla, pero el ping a un host fuera de la red local funciona. ¿Cuál es la causa posible?", "respuesta": "Se aplican reglas de seguridad al gateway que evitan que procese solicitudes de ping", "nota": "Si el gateway estuviera caído no saldrías a ningún lado. Está trabajando, solo que no contesta pings."},
+      {"pregunta": "¿Para qué sirve el comando ping?", "respuesta": "Para verificar si un destino responde y medir la conectividad básica", "nota": "Envía solicitudes ICMP. Verifica la capa de red."},
+      {"pregunta": "¿Para qué sirve el comando ipconfig /all?", "respuesta": "Para ver la configuración de red completa del equipo", "nota": "El /all agrega la dirección MAC, los servidores DNS y los datos del DHCP."},
+      {"pregunta": "¿Para qué sirve el comando nslookup?", "respuesta": "Para comprobar la resolución de nombres de dominio", "nota": "Traduce un nombre a una IP preguntándole al DNS. Verifica la capa de aplicación."},
+      {"pregunta": "¿Para qué sirve el comando arp -a?", "respuesta": "Para ver la tabla que relaciona direcciones IP con direcciones MAC", "nota": "Trabaja solo dentro de la red local. Verifica la capa de enlace."},
+      {"pregunta": "¿Para qué sirve el comando pathping?", "respuesta": "Para comprobar la pérdida de paquetes en cada salto del camino", "nota": "Es como juntar el ping y el tracert en un solo comando."},
+      {"pregunta": "¿Cuál es la diferencia entre ping y tracert?", "respuesta": "El ping dice si el destino responde, y el tracert muestra en qué punto del camino se corta", "nota": "El ping da un sí o un no. El tracert da la ubicación del problema."},
+      {"pregunta": "¿En qué orden se diagnostica una red apoyándose en el modelo OSI?", "respuesta": "De abajo hacia arriba: física, enlace, red, transporte y aplicación", "nota": "Primero se descartan las causas simples y baratas antes de investigar las complejas."},
+      {"pregunta": "¿Qué capa verifica el comando netstat?", "respuesta": "La capa de transporte", "nota": "Porque muestra puertos y conexiones, que son cosa de transporte."},
+      {"pregunta": "¿Qué capa verifica el comando arp?", "respuesta": "La capa de enlace", "nota": "Porque trabaja con direcciones MAC."},
+      {"pregunta": "¿Qué herramienta captura y descompone el tráfico de red trama por trama?", "respuesta": "Wireshark", "nota": ""},
+      {"pregunta": "¿Qué herramienta se usa para el descubrimiento de red y el escaneo de puertos activos?", "respuesta": "Nmap, o su versión gráfica Zenmap", "nota": ""},
+      {"pregunta": "¿Qué herramientas son simuladores de red para diseñar y probar topologías?", "respuesta": "Packet Tracer y GNS3", "nota": ""},
+      {"pregunta": "¿Qué hacen los monitores SNMP?", "respuesta": "Supervisan la red de forma continua y avisan automáticamente cuando hay fallos", "nota": ""},
+      {"pregunta": "¿Cuál es la distancia máxima del cableado horizontal en cobre?", "respuesta": "90 metros", "nota": "Los 100 metros son del canal completo, o sea los 90 más los patch cords de las puntas."},
+      {"pregunta": "¿Qué norma define los requisitos del cableado: categorías, distancias y terminación?", "respuesta": "La norma ANSI/TIA-568", "nota": "Truco: el 568 es el cable, el 569 son los espacios."},
+      {"pregunta": "¿Qué norma define los espacios y rutas físicas como canalizaciones, cuartos y ductos?", "respuesta": "La norma ANSI/TIA-569", "nota": ""},
+      {"pregunta": "¿Cuál es el estándar internacional equivalente a la familia TIA-568?", "respuesta": "La norma ISO/IEC 11801", "nota": ""},
+      {"pregunta": "¿Cuáles son los seis subsistemas del cableado estructurado?", "respuesta": "Entrada de servicios, cuarto de equipos, backbone vertical, cuarto de telecomunicaciones, cableado horizontal y área de trabajo", "nota": "Van de afuera hacia adentro, del proveedor hasta el escritorio."},
+      {"pregunta": "¿Cuál es la diferencia entre los estándares T568A y T568B?", "respuesta": "Intercambian el par verde con el par naranja", "nota": "Las posiciones 4, 5, 7 y 8 son idénticas en los dos."},
+      {"pregunta": "¿Cuándo se usa un cable cruzado?", "respuesta": "Entre dispositivos iguales, como un switch con otro switch", "nota": "El directo se usa entre dispositivos distintos, como PC con switch."},
+      {"pregunta": "¿Qué es el Auto-MDIX?", "respuesta": "La función que detecta sola la polaridad que necesita el cable", "nota": "Por eso hoy un cable directo funciona en casi cualquier escenario."},
+      {"pregunta": "¿Qué velocidad y distancia soporta el cable Cat 6A?", "respuesta": "10 Gbps hasta 100 metros", "nota": "El Cat 6 normal llega a 10 Gbps solo hasta unos 55 metros."},
+      {"pregunta": "¿Qué velocidad soporta el cable Cat 5e?", "respuesta": "1 Gbps hasta 100 metros", "nota": ""},
+      {"pregunta": "¿Qué distancia alcanza la fibra óptica monomodo?", "respuesta": "De 10 a más de 40 kilómetros", "nota": "La multimodo llega de 300 a 550 metros."},
+      {"pregunta": "¿Cuál es el conector macho de ocho posiciones que termina un cable UTP?", "respuesta": "El conector RJ45", "nota": "El jack RJ45 es la hembra, la que va en la toma de pared o el patch panel."},
+      {"pregunta": "¿Qué componente concentra en el rack todos los cables horizontales?", "respuesta": "El patch panel", "nota": ""},
+      {"pregunta": "¿Por qué el cableado estructurado se diseña pensando en la vida útil del edificio?", "respuesta": "Porque dura de 10 a 15 años, mientras que los equipos activos rara vez pasan de 5", "nota": "Por eso no se diseña para los equipos de hoy sino para algo general."},
+      {"pregunta": "¿Por qué no se conecta el cable del usuario directamente al switch?", "respuesta": "Porque el cableado horizontal se instala una sola vez y no se manipula, mientras que los patch cords están hechos para conectarse y desconectarse seguido", "nota": ""},
+      {"pregunta": "¿Qué norma rige el diseño de un datacenter?", "respuesta": "La norma ANSI/TIA-942", "nota": ""},
+      {"pregunta": "¿Cuáles son los cuatro subsistemas de la norma TIA-942?", "respuesta": "Telecomunicaciones, arquitectura, sistema eléctrico y sistema mecánico", "nota": "El eléctrico es la energía de respaldo y el mecánico la climatización."},
+      {"pregunta": "¿Qué disponibilidad tiene un datacenter Tier III?", "respuesta": "99.982 por ciento, unas 1.6 horas de inactividad al año", "nota": "El Tier III es mantenible concurrentemente."},
+      {"pregunta": "¿Qué caracteriza a un datacenter Tier IV?", "respuesta": "Es tolerante a fallos, con 99.995 por ciento de disponibilidad y unos 26 minutos de caída al año", "nota": "Es el nivel más alto."},
+      {"pregunta": "¿Qué caracteriza a un datacenter Tier I?", "respuesta": "No tiene redundancia, con 99.671 por ciento de disponibilidad y unas 28.8 horas de caída al año", "nota": "Es el nivel más básico."},
+      {"pregunta": "¿Qué significa la redundancia N más 1?", "respuesta": "Que hay un componente de respaldo adicional listo para asumir la carga", "nota": "La N sola es la capacidad mínima, sin ningún margen ante una falla."},
+      {"pregunta": "¿Qué significa la redundancia 2N?", "respuesta": "Que el sistema está completamente duplicado, con dos rutas totalmente independientes", "nota": ""},
+      {"pregunta": "¿Para qué sirve el diseño de pasillo frío y pasillo caliente en un datacenter?", "respuesta": "Para que un equipo no aspire el aire caliente que expulsa su vecino", "nota": "Las entradas de aire frío se enfrentan al pasillo frío y las salidas al caliente."},
+      {"pregunta": "¿Qué es un datacenter?", "respuesta": "Una instalación diseñada para alojar sistemas críticos, con exigencias de disponibilidad, redundancia y control ambiental muy superiores a las de un cuarto de telecomunicaciones", "nota": ""},
+      {"pregunta": "¿Qué medidas de seguridad física y ambiental tiene un datacenter?", "respuesta": "Control de acceso por credencial o biometría, circuito cerrado de televisión, sensores de temperatura y humedad, y extinción de incendios que no dañe el equipamiento", "nota": ""},
       {"pregunta": "¿Qué tipo de servidor se encarga de almacenar y compartir documentos?", "respuesta": "Servidor de archivos", "nota": "FTP es un protocolo de transferencia, no el servidor que almacena."},
       {"pregunta": "¿Cuál de los siguientes protocolos se utiliza para resolución de direcciones IP a MAC?", "respuesta": "ARP", "nota": "DNS traduce nombres a IP. ARP traduce IP a MAC."},
       {"pregunta": "¿Qué servidor asigna direcciones IP automáticamente?", "respuesta": "Servidor DHCP", "nota": "DHCP reparte IPs solo."},
@@ -292,10 +411,28 @@
     // Siglas de 1 o 2 letras que sí queremos conservar.
     const CORTAS = new Set(["ip", "fq"]);
 
-    // Por debajo de este puntaje no cambiamos la tarjeta.
-    // Una palabra suelta muy común (capa, red, protocolo) queda debajo.
+    // Por encima de esto respondemos con el banco, seguros.
+    // Una palabra suelta muy común (capa, red) queda por debajo.
     // Con dos palabras útiles de la pregunta ya suele pasar.
-    const UMBRAL = 2;
+    const UMBRAL_ALTO = 2;
+
+    // Entre este y el alto mostramos el banco, avisando que no es seguro.
+    const UMBRAL_BAJO = 1;
+
+    // Cuántas palabras útiles hacen que un puntaje bajo se vaya a Gemini.
+    const PALABRAS_PARA_GEMINI = 4;
+
+    // Con 2 o menos, y sin coincidencia, se queda callada: es ruido.
+    const PALABRAS_RUIDO = 2;
+
+    // Las primeras de BANCO. Si el texto de ejemplos no cabe, se mandan 25.
+    const CURSO = 76;
+    const LIMITE_EJEMPLOS = 12000;
+    const TOPE_EJEMPLOS = 25;
+
+    const MODELO_GEMINI = "gemini-3.5-flash-lite";
+
+    const INSTRUCCION_BASE = "Eres el tutor de un estudiante universitario peruano del curso Fundamentos y Diseño de Redes de Datos. Respondes en español, en lenguaje sencillo y humano, sin tecnicismos innecesarios. Tus respuestas se leen EN VOZ ALTA: escribe en frases corridas, sin listas, sin viñetas, sin markdown, sin asteriscos y sin emojis. Si te hacen una pregunta de examen, responde directo en una o dos frases: primero la respuesta correcta y después el porqué. Si te piden que expliques, que des un ejemplo o que lo desarrolles, extiéndete hasta seis frases y usa una comparación de la vida diaria. Si no sabes algo, dilo en vez de inventar.";
 
     // Cuántas palabras recientes miramos. Lo de más atrás se ignora.
     const VENTANA = 25;
@@ -325,6 +462,9 @@
     const avisarEscucha = document.getElementById("avisar-escucha");
     const reiniciosEl = document.getElementById("reinicios");
     const buscador = document.getElementById("buscador");
+    const bloqueClave = document.getElementById("bloque-clave");
+    const campoClave = document.getElementById("campo-clave");
+    const cambiarClave = document.getElementById("cambiar-clave");
     const diagnostico = document.getElementById("diagnostico");
 
     let reconocimiento = null;
@@ -365,6 +505,17 @@
     let temporizadorSilencio = null;
     let temporizadorFirma = null;
     let temporizadorFlags = null;
+    let temporizadorBusqueda = null;
+
+    // Sube cuando llega otra decisión, para ignorar una respuesta vieja de Gemini.
+    let geminiToken = 0;
+    let geminiControl = null;
+    let consultaAbierta = false;
+    let codigoErrorGemini = "";
+
+    // Últimas 6 intervenciones con Gemini: pregunta, respuesta, pregunta, respuesta.
+    let historial = [];
+    let marcaHistorial = 0;
 
     // En iPhone el uso es un toque por pregunta. Android no entra aquí.
     if (ES_IOS) {
@@ -456,6 +607,7 @@
     });
 
     // Cuántas preguntas contienen cada palabra. Sirve para la rareza.
+    // Se recalcula con el banco completo cada vez que se abre la página.
     const frecuencia = {};
     for (let i = 0; i < PREPARADAS.length; i++) {
       PREPARADAS[i].unicas.forEach(function (palabra) {
@@ -472,10 +624,10 @@
     });
 
     // Compara lo dictado (o lo escrito) con todas las preguntas.
-    // Devuelve null si no hay una coincidencia clara.
-    function emparejar(texto) {
+    // El puntaje es el de siempre: suma de rarezas, partido por la raíz de la pregunta.
+    function ordenar(texto) {
       const dictado = new Set(palabrasUtiles(texto));
-      if (dictado.size === 0) return null;
+      if (dictado.size === 0) return [];
 
       const ranking = PREPARADAS.map(function (pregunta) {
         let suma = 0;
@@ -487,23 +639,272 @@
       });
 
       ranking.sort(function (a, b) { return b.puntaje - a.puntaje; });
+      return ranking;
+    }
 
+    // Coincidencia segura. Null si no pasa el umbral alto.
+    function emparejar(texto) {
+      const ranking = ordenar(texto);
       const mejor = ranking[0];
       const segundo = ranking[1];
-      if (!mejor || mejor.puntaje < UMBRAL) return null;
+      if (!mejor || mejor.puntaje < UMBRAL_ALTO) return null;
 
       // Si van muy parejas, no arriesgamos una sola.
       if (segundo && segundo.puntaje > 0) {
         const diferencia = (mejor.puntaje - segundo.puntaje) / mejor.puntaje;
         if (diferencia < 0.15) {
-          return { tipo: "dos", opciones: [mejor.pregunta, segundo.pregunta] };
+          return { tipo: "dos", etiqueta: "Del banco", opciones: [mejor.pregunta, segundo.pregunta] };
         }
       }
 
-      return { tipo: "una", opciones: [mejor.pregunta] };
+      return { tipo: "una", etiqueta: "Del banco", opciones: [mejor.pregunta] };
+    }
+
+    // a) banco seguro, b) banco dudoso, c) Gemini, d) callar si es ruido.
+    function decidir(texto) {
+      const utiles = palabrasUtiles(texto);
+      const ranking = ordenar(texto);
+      const mejor = ranking[0];
+      const puntaje = mejor ? mejor.puntaje : 0;
+
+      if (mejor && puntaje >= UMBRAL_ALTO) {
+        return { accion: "banco", resultado: emparejar(texto) };
+      }
+
+      // Puntaje bajo en una frase larga: se le pregunta a Gemini, no al banco.
+      if (mejor && puntaje >= UMBRAL_BAJO && utiles.length <= PALABRAS_PARA_GEMINI) {
+        return {
+          accion: "banco",
+          resultado: {
+            tipo: "una",
+            etiqueta: "Del banco, no estoy seguro",
+            prefacio: "Creo que preguntas por esto.",
+            opciones: [mejor.pregunta]
+          }
+        };
+      }
+
+      if (utiles.length <= PALABRAS_RUIDO) return { accion: "callar" };
+
+      return { accion: "gemini", ranking: ranking };
+    }
+
+    function lineaCurso(item) {
+      return item.pregunta + " — " + item.respuesta;
+    }
+
+    // Las 76 de la unidad 2. Si no caben, las 25 más parecidas a lo dictado.
+    function ejemplosCurso(ranking) {
+      const curso = BANCO.slice(0, CURSO);
+      const completo = curso.map(lineaCurso).join("\n");
+      if (completo.length <= LIMITE_EJEMPLOS) return completo;
+
+      const puntaje = {};
+      for (let i = 0; i < ranking.length; i++) {
+        puntaje[ranking[i].pregunta.indice] = ranking[i].puntaje;
+      }
+
+      const ordenados = curso.map(function (item, indice) {
+        return { item: item, puntaje: puntaje[indice] || 0 };
+      });
+      ordenados.sort(function (a, b) { return b.puntaje - a.puntaje; });
+
+      const cortos = [];
+      const tope = Math.min(TOPE_EJEMPLOS, ordenados.length);
+      for (let i = 0; i < tope; i++) cortos.push(lineaCurso(ordenados[i].item));
+      return cortos.join("\n");
+    }
+
+    function instruccionSistema(ranking) {
+      return INSTRUCCION_BASE
+        + "\nSi la pregunta se parece a alguna de estas, responde en la misma línea que ellas: [\n"
+        + ejemplosCurso(ranking)
+        + "\n]";
+    }
+
+    function leerClave() {
+      try {
+        return localStorage.getItem("gemini_key") || null;
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function guardarClave(valor) {
+      try {
+        localStorage.setItem("gemini_key", valor);
+        return true;
+      } catch (error) {
+        return false;
+      }
+    }
+
+    function borrarClaveGuardada() {
+      try {
+        localStorage.removeItem("gemini_key");
+      } catch (error) {}
+    }
+
+    function pintarClave() {
+      const hay = !!leerClave();
+      bloqueClave.hidden = hay;
+      cambiarClave.hidden = !hay;
+    }
+
+    function vaciarHistorial() {
+      historial = [];
+      marcaHistorial += 1;
+    }
+
+    function recordar(pregunta, respuesta) {
+      historial.push({ role: "user", parts: [{ text: pregunta }] });
+      historial.push({ role: "model", parts: [{ text: respuesta }] });
+      if (historial.length > 6) historial = historial.slice(-6);
+    }
+
+    function cancelarGemini() {
+      geminiToken += 1;
+      consultaAbierta = false;
+      if (geminiControl) {
+        try { geminiControl.abort(); } catch (error) {}
+        geminiControl = null;
+      }
+    }
+
+    function fraseDeFallo(codigo) {
+      const estado = Number(codigo);
+      if (estado === 400 || estado === 403) return "La clave de Gemini no es válida";
+      if (estado === 404) return "El modelo no existe";
+      if (estado === 429) return "Llegué al límite de consultas, espera un momento";
+      return "No pude conectarme";
+    }
+
+    // Lo dice en voz alta y hablar() vuelve a abrir el micrófono.
+    function fallarGemini(codigo) {
+      codigoErrorGemini = String(codigo);
+      geminiControl = null;
+      consultaAbierta = false;
+      actualizarDiagnostico();
+      hablar(fraseDeFallo(codigo));
+    }
+
+    function publicarGemini(texto, respuesta) {
+      codigoErrorGemini = "";
+      ultimaCoincidencia = Date.now();
+      estado.textContent = "";
+      actualizarDiagnostico();
+      publicarSiCambio({
+        tipo: "gemini",
+        etiqueta: "Respuesta de Gemini",
+        opciones: [{
+          indice: -1,
+          pregunta: texto,
+          respuesta: respuesta,
+          nota: ""
+        }]
+      });
+    }
+
+    function pedirGemini(texto, ranking) {
+      const clave = leerClave();
+      if (!clave) {
+        pintarClave();
+        hablar("Falta configurar la clave de Gemini");
+        return;
+      }
+
+      if (consultaAbierta && geminiControl && geminiControl.textoPedido === texto) return;
+
+      if (geminiControl) {
+        try { geminiControl.abort(); } catch (error) {}
+      }
+
+      const token = ++geminiToken;
+      const marca = marcaHistorial;
+      const control = new AbortController();
+      control.textoPedido = texto;
+      geminiControl = control;
+      consultaAbierta = true;
+      ultimaCoincidencia = Date.now();
+      estado.textContent = "Consultando a Gemini…";
+
+      let agoto = false;
+      const espera = setTimeout(function () {
+        agoto = true;
+        try { control.abort(); } catch (error) {}
+      }, 20000);
+
+      const url = "https://generativelanguage.googleapis.com/v1beta/models/"
+        + encodeURIComponent(MODELO_GEMINI) + ":generateContent";
+
+      fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-goog-api-key": clave
+        },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: instruccionSistema(ranking) }] },
+          contents: historial.concat([{ role: "user", parts: [{ text: texto }] }]),
+          generationConfig: { temperature: 0.2, maxOutputTokens: 700 }
+        }),
+        signal: control.signal
+      }).then(function (respuesta) {
+        if (token !== geminiToken) return null;
+        if (!respuesta.ok) {
+          clearTimeout(espera);
+          fallarGemini(respuesta.status);
+          return null;
+        }
+        return respuesta.json();
+      }).then(function (datos) {
+        clearTimeout(espera);
+        if (!datos || token !== geminiToken) return;
+        geminiControl = null;
+        consultaAbierta = false;
+        const partes = (((datos.candidates || [])[0] || {}).content || {}).parts || [];
+        let respuesta = "";
+        for (let i = 0; i < partes.length; i++) {
+          if (partes[i].text) respuesta += partes[i].text;
+        }
+        respuesta = respuesta.trim();
+        if (!respuesta) {
+          fallarGemini("vacio");
+          return;
+        }
+        if (marca === marcaHistorial) recordar(texto, respuesta);
+        publicarGemini(texto, respuesta);
+      }).catch(function (error) {
+        clearTimeout(espera);
+        if (token !== geminiToken) return;
+        if (error && error.name === "AbortError" && !agoto) return;
+        fallarGemini(agoto ? "tiempo" : "red");
+      });
+    }
+
+    function aplicarDecision(texto) {
+      const decision = decidir(texto);
+      if (decision.accion === "callar") {
+        cancelarGemini();
+        return false;
+      }
+      if (decision.accion === "banco" && decision.resultado) {
+        cancelarGemini();
+        ultimaCoincidencia = Date.now();
+        estado.textContent = "";
+        publicarSiCambio(decision.resultado);
+        return true;
+      }
+      if (decision.accion !== "gemini") return false;
+      pedirGemini(texto, decision.ranking);
+      return true;
     }
 
     function firmaDe(resultado) {
+      if (resultado.tipo === "gemini") {
+        const item = resultado.opciones[0];
+        return "gemini:" + item.pregunta + "=" + item.respuesta;
+      }
       const ids = resultado.opciones.map(function (o) { return o.indice; });
       ids.sort(function (a, b) { return a - b; });
       return resultado.tipo + ":" + ids.join("-");
@@ -513,6 +914,15 @@
 
     function pintarTarjeta(resultado) {
       tarjeta.textContent = "";
+
+      if (resultado.etiqueta) {
+        const etiqueta = document.createElement("p");
+        etiqueta.className = "etiqueta";
+        if (resultado.etiqueta.indexOf("no estoy seguro") !== -1) etiqueta.className += " insegura";
+        else if (resultado.etiqueta.indexOf("Gemini") !== -1) etiqueta.className += " gemini";
+        etiqueta.textContent = resultado.etiqueta;
+        tarjeta.appendChild(etiqueta);
+      }
 
       if (resultado.tipo === "dos") {
         const titulo = document.createElement("p");
@@ -613,18 +1023,22 @@
 
     // Arma lo que se va a decir. El punto después de la pregunta es la pausa corta.
     function textoDeResultado(resultado) {
-      if (resultado.tipo === "dos") {
+      let texto;
+      if (resultado.tipo === "gemini") {
+        texto = resultado.opciones[0].respuesta;
+      } else if (resultado.tipo === "dos") {
         const primera = resultado.opciones[0];
         const segunda = resultado.opciones[1];
-        return "Puede ser una de estas dos. Primera: " + primera.pregunta
+        texto = "Puede ser una de estas dos. Primera: " + primera.pregunta
           + ", la respuesta es " + primera.respuesta
           + ". Segunda: " + segunda.pregunta
           + ", la respuesta es " + segunda.respuesta + ".";
+      } else {
+        const item = resultado.opciones[0];
+        texto = "Entendí: " + item.pregunta + ". La respuesta es: " + item.respuesta;
+        if (item.nota) texto += ". " + item.nota;
       }
-
-      const item = resultado.opciones[0];
-      let texto = "Entendí: " + item.pregunta + ". La respuesta es: " + item.respuesta;
-      if (item.nota) texto += ". " + item.nota;
+      if (resultado.prefacio) texto = resultado.prefacio + " " + texto;
       return texto;
     }
 
@@ -751,7 +1165,8 @@
         "escuchando: " + (quiereEscuchar ? "sí" : "no")
         + " | hablando: " + (hablando ? "sí" : "no")
         + " | palabras: " + palabrasFinales.length
-        + " | firma: " + (firmaVisible || "—");
+        + " | firma: " + (firmaVisible || "—")
+        + (codigoErrorGemini ? " | gemini: " + codigoErrorGemini : "");
     }
 
     // Cada escucha nueva nace en cero. Si no, la firma vieja impide publicar.
@@ -858,15 +1273,8 @@
         return;
       }
 
-      const resultado = emparejar(texto);
-      if (!resultado) {
-        // Sin coincidencia clara: la tarjeta se queda y no se habla.
-        if (quiereEscuchar) estado.textContent = "escuchando...";
-        return;
-      }
-      ultimaCoincidencia = Date.now();
-      estado.textContent = "";
-      publicarSiCambio(resultado);
+      const atendio = aplicarDecision(texto);
+      if (!atendio && quiereEscuchar) estado.textContent = "escuchando...";
     }
 
     function alError(evento) {
@@ -906,7 +1314,8 @@
       }
       evaluarVoz(dicho);
       // Si no llegó a hablar, no hay onend que reabra el micrófono.
-      if (!hablando) quedarseEnToque();
+      // Si Gemini sigue consultando, la respuesta llega después y habla sola.
+      if (!hablando && !consultaAbierta) quedarseEnToque();
     }
 
     function quedarseEnToque() {
@@ -1083,6 +1492,10 @@
     function detener() {
       quiereEscuchar = false;
       reinicioPendiente = false;
+      vaciarHistorial();
+      cancelarGemini();
+      clearTimeout(temporizadorBusqueda);
+      temporizadorBusqueda = null;
       clearTimeout(temporizadorSilencio);
       temporizadorSilencio = null;
       pintarBoton();
@@ -1110,11 +1523,34 @@
       else empezar();
     });
 
+    document.getElementById("borrar-conversacion").addEventListener("click", function (evento) {
+      evento.preventDefault();
+      vaciarHistorial();
+      estado.textContent = "Conversación borrada.";
+    });
+
+    document.getElementById("guardar-clave").addEventListener("click", function () {
+      const valor = campoClave.value.trim();
+      if (!valor) return;
+      if (!guardarClave(valor)) return;
+      campoClave.value = "";
+      pintarClave();
+    });
+
+    document.getElementById("enlace-cambiar-clave").addEventListener("click", function (evento) {
+      evento.preventDefault();
+      borrarClaveGuardada();
+      campoClave.value = "";
+      pintarClave();
+    });
+
+    pintarClave();
+
     // En modo toque, un toque en la pantalla escucha. El buscador y los interruptores no.
     document.addEventListener("click", function (evento) {
       if (!ES_IOS || quiereEscuchar || hablando) return;
       const origen = evento.target;
-      if (origen.closest && origen.closest("#buscador, label.buscar, label.interruptor, #btn-escuchar")) return;
+      if (origen.closest && origen.closest("#buscador, label.buscar, label.interruptor, #btn-escuchar, #borrar-conversacion, #bloque-clave, #cambiar-clave")) return;
       desbloquearVoz();
       empezar();
     });
@@ -1169,18 +1605,34 @@
 
     buscador.addEventListener("input", function () {
       const texto = buscador.value.trim();
-      if (!texto) return;
+      clearTimeout(temporizadorBusqueda);
+      temporizadorBusqueda = null;
+      if (!texto) {
+        cancelarGemini();
+        return;
+      }
 
-      const resultado = emparejar(texto);
-      if (!resultado) {
+      const decision = decidir(texto);
+      if (decision.accion === "banco") {
+        cancelarGemini();
+        estado.textContent = "";
+        publicarSiCambio(decision.resultado);
+        return;
+      }
+      if (decision.accion === "callar") {
+        cancelarGemini();
         if (palabrasUtiles(texto).length > 0) {
           estado.textContent = "No hay una coincidencia clara.";
         }
         return;
       }
 
-      estado.textContent = "";
-      publicarSiCambio(resultado);
+      estado.textContent = "Consultando a Gemini…";
+      temporizadorBusqueda = setTimeout(function () {
+        temporizadorBusqueda = null;
+        if (buscador.value.trim() !== texto) return;
+        pedirGemini(texto, decision.ranking);
+      }, 800);
     });
   </script>
 </body>
