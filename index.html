@@ -223,6 +223,17 @@
       font-size: 1.1rem;
     }
 
+    #selector-voz {
+      width: 100%;
+      min-height: 48px;
+      padding: 8px 12px;
+      border: 1px solid var(--linea);
+      border-radius: 12px;
+      background: #121820;
+      color: white;
+      font-size: 1rem;
+    }
+
     #bloque-clave { margin-top: 14px; }
 
     #guardar-clave {
@@ -265,6 +276,9 @@
     <input id="avisar-escucha" type="checkbox" checked>
     <span>Avisar cuando escuche</span>
   </label>
+
+  <label class="buscar" for="selector-voz">Voz</label>
+  <select id="selector-voz"></select>
 
   <p id="reinicios" class="reinicios">Reinicios: 0</p>
   <p class="enlaces"><a id="borrar-conversacion" href="#">Borrar conversación</a></p>
@@ -478,6 +492,7 @@
     const diagnostico = document.getElementById("diagnostico");
     const modoActivo = document.getElementById("modo-activo");
     const avisoPrincipal = document.getElementById("aviso-principal");
+    const selectorVoz = document.getElementById("selector-voz");
     let avisoLeccion = "";
 
     let reconocimiento = null;
@@ -498,6 +513,10 @@
 
     // La voz en español se elige una sola vez, no en cada frase.
     let vozElegida = null;
+    let turnoHabla = 0;
+    let resolverHabla = null;
+    let pausaOracion = null;
+    let seguroHabla = null;
 
     // Lo último que se dictó. En iPhone se evalúa cuando Safari corta solo.
     let ultimoDictado = "";
@@ -801,10 +820,10 @@
     function leerVelocidad() {
       try {
         const valor = parseFloat(localStorage.getItem("velocidad"));
-        if (!valor || valor < 0.5 || valor > 2) return 1.1;
+        if (!valor || valor < 0.5 || valor > 2) return 0.9;
         return valor;
       } catch (error) {
-        return 1.1;
+        return 0.9;
       }
     }
 
@@ -870,10 +889,8 @@
       }
       palabrasFinales = [];
       transcripcion.textContent = "";
+      cortarHabla();
       detener();
-      if (window.speechSynthesis) {
-        try { window.speechSynthesis.cancel(); } catch (error) {}
-      }
     }
 
     function leerClave() {
@@ -1156,28 +1173,97 @@
     // --- Voz en alto ----------------------------------------------------------
 
     // Guarda una voz en español la primera vez que el navegador ya tiene la lista.
+    // Prefiere una mejorada, luego una remota, y al final la primera en español.
     function guardarVoz() {
-      if (vozElegida || !window.speechSynthesis) return;
+      if (!window.speechSynthesis) return;
       const voces = window.speechSynthesis.getVoices();
       if (!voces.length) return;
 
-      let respaldo = null;
+      const espanol = [];
       for (let i = 0; i < voces.length; i++) {
         const idioma = (voces[i].lang || "").toLowerCase();
-        const preferida = ES_IOS ? "es-mx" : "es-pe";
-        if (idioma === preferida) {
-          vozElegida = voces[i];
-          return;
-        }
-        if (!respaldo && idioma.indexOf("es") === 0) respaldo = voces[i];
+        if (idioma.indexOf("es") === 0) espanol.push(voces[i]);
       }
-      if (respaldo) vozElegida = respaldo;
+      if (!espanol.length) return;
+
+      llenarSelectorVoz(espanol);
+
+      const guardada = leerVozGuardada();
+      if (guardada) {
+        for (let i = 0; i < espanol.length; i++) {
+          if (claveVoz(espanol[i]) === guardada) {
+            vozElegida = espanol[i];
+            selectorVoz.value = guardada;
+            return;
+          }
+        }
+      }
+
+      let mejor = espanol[0];
+      let nivelMejor = nivelVoz(mejor);
+      for (let i = 1; i < espanol.length; i++) {
+        const nivel = nivelVoz(espanol[i]);
+        if (nivel > nivelMejor) {
+          nivelMejor = nivel;
+          mejor = espanol[i];
+        }
+      }
+      vozElegida = mejor;
+      selectorVoz.value = claveVoz(mejor);
+    }
+
+    function claveVoz(voz) {
+      return voz.voiceURI || voz.name || "";
+    }
+
+    function nivelVoz(voz) {
+      const nombre = voz.name || "";
+      if (/premium|enhanced|mejorada|siri/i.test(nombre)) return 3;
+      if (voz.localService === false) return 2;
+      return 1;
+    }
+
+    function leerVozGuardada() {
+      try {
+        return localStorage.getItem("voz");
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function guardarVozElegida(clave) {
+      try {
+        localStorage.setItem("voz", clave);
+      } catch (error) {}
+    }
+
+    function llenarSelectorVoz(espanol) {
+      const elegido = selectorVoz.value;
+      selectorVoz.textContent = "";
+      for (let i = 0; i < espanol.length; i++) {
+        const opcion = document.createElement("option");
+        opcion.value = claveVoz(espanol[i]);
+        opcion.textContent = espanol[i].name + " (" + espanol[i].lang + ")";
+        selectorVoz.appendChild(opcion);
+      }
+      if (elegido) selectorVoz.value = elegido;
     }
 
     if (window.speechSynthesis) {
       guardarVoz();
       window.speechSynthesis.addEventListener("voiceschanged", guardarVoz);
     }
+
+    selectorVoz.addEventListener("change", function () {
+      if (!window.speechSynthesis) return;
+      const voces = window.speechSynthesis.getVoices();
+      for (let i = 0; i < voces.length; i++) {
+        if (claveVoz(voces[i]) !== selectorVoz.value) continue;
+        vozElegida = voces[i];
+        guardarVozElegida(selectorVoz.value);
+        return;
+      }
+    });
 
     // Arma lo que se va a decir. El punto después de la pregunta es la pausa corta.
     function textoDeResultado(resultado) {
@@ -1205,26 +1291,86 @@
       hablar(textoDeResultado(resultado));
     }
 
+    // Corta en . ? ! y se queda con el signo. Un punto entre números no parte.
+    function partirOraciones(texto) {
+      const salida = [];
+      let actual = "";
+      for (let i = 0; i < texto.length; i++) {
+        const signo = texto.charAt(i);
+        actual += signo;
+        if (signo !== "." && signo !== "?" && signo !== "!") continue;
+        const antes = i > 0 ? texto.charAt(i - 1) : "";
+        const despues = i + 1 < texto.length ? texto.charAt(i + 1) : "";
+        if (signo === "." && antes >= "0" && antes <= "9" && despues >= "0" && despues <= "9") continue;
+        if (despues !== "" && despues !== " " && despues !== "\n") continue;
+        const pieza = actual.trim();
+        if (pieza) salida.push(pieza);
+        actual = "";
+      }
+      const cola = actual.trim();
+      if (cola) salida.push(cola);
+      return salida;
+    }
+
+    // Suelta la cola y la promesa de la lectura que estaba en curso.
+    function soltarCola() {
+      clearTimeout(pausaOracion);
+      pausaOracion = null;
+      clearTimeout(seguroHabla);
+      seguroHabla = null;
+      clearTimeout(temporizadorFlags);
+      temporizadorFlags = null;
+      turnoHabla += 1;
+      if (window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch (error) {}
+      }
+      if (resolverHabla) {
+        const resolver = resolverHabla;
+        resolverHabla = null;
+        resolver();
+      }
+    }
+
+    // "Para" y "silencio" cortan también lo que faltaba por decir.
+    function cortarHabla() {
+      soltarCola();
+      hablando = false;
+      cierrePorVoz = false;
+      pintarBoton();
+      if (quiereEscuchar && !(ES_IOS && modoToqueForzado)) {
+        setTimeout(function () {
+          if (hablando || !quiereEscuchar) return;
+          if (ES_IOS && modoToqueForzado) return;
+          prepararReenganche();
+        }, 700);
+      }
+    }
+
     // Apaga el micrófono, dice el texto y al terminar vuelve a escuchar.
-    // Devuelve una promesa que se cumple cuando ya acabó de hablar.
+    // La promesa se cumple cuando acaba la última oración.
     function hablar(texto) {
       return new Promise(function (resolve) {
-        if (!texto) {
+        const oraciones = partirOraciones(texto || "");
+        if (!oraciones.length) {
           resolve();
           return;
         }
+
+        soltarCola();
+        const turno = ++turnoHabla;
+        resolverHabla = resolve;
 
         hablando = true;
         estado.textContent = "Respondiendo…";
         pintarBoton();
 
-        // Si onend no llega, estas banderas no pueden quedarse en true.
-        clearTimeout(temporizadorFlags);
+        const duracion = 1500 + texto.length * 90 + Math.max(0, oraciones.length - 1) * 250;
         temporizadorFlags = setTimeout(function () {
+          if (turno !== turnoHabla) return;
           hablando = false;
           cierrePorVoz = false;
           pintarBoton();
-        }, 3000);
+        }, duracion);
 
         // El micrófono se apaga antes de que suene la voz.
         cierrePorVoz = false;
@@ -1238,19 +1384,22 @@
         }
 
         let termino = false;
-        let seguro = null;
 
         function finalizar(forzado) {
-          if (termino) return;
+          if (turno !== turnoHabla || termino) return;
           termino = true;
-          clearTimeout(seguro);
+          clearTimeout(seguroHabla);
+          seguroHabla = null;
           clearTimeout(temporizadorFlags);
           temporizadorFlags = null;
+          clearTimeout(pausaOracion);
+          pausaOracion = null;
 
-          // Si el tiempo de seguridad ganó, cortamos lo que siga sonando.
           if (forzado && window.speechSynthesis) {
             try { window.speechSynthesis.cancel(); } catch (error) {}
           }
+
+          if (resolverHabla === resolve) resolverHabla = null;
 
           hablando = false;
           palabrasFinales = [];
@@ -1272,9 +1421,9 @@
           // Dos segundos después se puede volver a pedir la misma pregunta.
           // Así el final de la frase no la dispara otra vez al toque.
           clearTimeout(temporizadorFirma);
-          const turno = ++turnoFirma;
+          const turnoFirmaLocal = ++turnoFirma;
           temporizadorFirma = setTimeout(function () {
-            if (turno !== turnoFirma) return;
+            if (turnoFirmaLocal !== turnoFirma) return;
             firmaVisible = "";
             actualizarDiagnostico();
           }, 2000);
@@ -1282,35 +1431,55 @@
           resolve();
         }
 
-        // En algunos Android onend no llega. Este reloj fuerza el cierre.
-        seguro = setTimeout(function () {
+        seguroHabla = setTimeout(function () {
           finalizar(true);
-        }, 1500 + texto.length * 90);
+        }, duracion);
 
         if (!window.speechSynthesis) {
           finalizar(true);
           return;
         }
 
-        try { window.speechSynthesis.cancel(); } catch (error) {}
+        let indice = 0;
+        function decirSiguiente() {
+          if (turno !== turnoHabla || termino) return;
+          if (indice >= oraciones.length) {
+            finalizar(false);
+            return;
+          }
 
-        const frase = new SpeechSynthesisUtterance(texto);
-        frase.lang = IDIOMA;
-        frase.rate = velocidad;
-        if (vozElegida) frase.voice = vozElegida;
-        frase.onend = function () { finalizar(false); };
-        frase.onerror = function () { finalizar(false); };
-        try {
-          window.speechSynthesis.speak(frase);
-        } catch (error) {
-          finalizar(true);
+          const frase = new SpeechSynthesisUtterance(oraciones[indice]);
+          indice += 1;
+          frase.lang = IDIOMA;
+          frase.rate = velocidad;
+          if (vozElegida) frase.voice = vozElegida;
+          frase.onend = function () {
+            if (turno !== turnoHabla || termino) return;
+            if (indice >= oraciones.length) {
+              finalizar(false);
+              return;
+            }
+            pausaOracion = setTimeout(decirSiguiente, 250);
+          };
+          frase.onerror = function () {
+            if (turno !== turnoHabla || termino) return;
+            finalizar(false);
+          };
+          try {
+            window.speechSynthesis.speak(frase);
+          } catch (error) {
+            finalizar(true);
+          }
         }
+
+        // Un instante después de cancelar, si no Chrome se traga la frase nueva.
+        pausaOracion = setTimeout(decirSiguiente, 0);
       });
     }
 
     leerVoz.addEventListener("change", function () {
       if (!leerVoz.checked) {
-        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        cortarHabla();
         return;
       }
       if (resultadoVisible) decirResultado(resultadoVisible);
@@ -1689,7 +1858,7 @@
     document.addEventListener("click", function (evento) {
       if (!ES_IOS || quiereEscuchar || hablando) return;
       const origen = evento.target;
-      if (origen.closest && origen.closest("#buscador, label.buscar, label.interruptor, #btn-escuchar, #borrar-conversacion, #bloque-clave, #cambiar-clave")) return;
+      if (origen.closest && origen.closest("#buscador, label.buscar, label.interruptor, #btn-escuchar, #borrar-conversacion, #bloque-clave, #cambiar-clave, #selector-voz")) return;
       desbloquearVoz();
       empezar();
     });
